@@ -1,9 +1,10 @@
-// Genera n8n/nevadaradar-bot.json a partir de src/*.js:  npm run build
+// Genera n8n/nevadaradar-bot.json a partir de core/*.js:  npm run build
 // Opcional: TELEGRAM_CRED_ID y TELEGRAM_CRED_NAME (el id de tu credencial en n8n, que no es secreto)
 // rellenan la credencial en todos los nodos Telegram. Se leen del entorno o de un archivo .env
 // (ignorado por git). Sin ellas, la credencial se elige a mano al importar.
 const fs = require('fs');
 const leer = (f) => fs.readFileSync(__dirname + '/../' + f, 'utf8');
+const codigo = require('./codigo-n8n');
 if (fs.existsSync(__dirname + '/../.env')) {
   for (const l of leer('.env').split(/\r?\n/)) {
     const m = l.match(/^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/);
@@ -46,7 +47,7 @@ const wf = {
       name: 'Mensaje o botón', type: 'n8n-nodes-base.telegramTrigger', typeVersion: 1.2, position: [0, 200],
       webhookId: 'b7d1c6a0-5a0e-4e0a-9d33-2f6a1c0e7a11',
     }),
-    { parameters: { jsCode: leer('src/cerebro.js') }, name: 'Cerebro', type: 'n8n-nodes-base.code', typeVersion: 2, position: [240, 200] },
+    { parameters: { jsCode: codigo.cerebro() }, name: 'Cerebro', type: 'n8n-nodes-base.code', typeVersion: 2, position: [240, 200] },
     {
       parameters: { rules: { values: ['bienvenida', 'pregunta', 'texto', 'resumen', 'prevision'].map(regla) }, options: {} },
       name: '¿Qué responder?', type: 'n8n-nodes-base.switch', typeVersion: 3.2, position: [480, 200],
@@ -76,7 +77,7 @@ const wf = {
       },
       name: 'Open-Meteo 16 días', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [760, 600],
     },
-    { parameters: { jsCode: leer('src/evaluar-dias.js') }, name: 'Evaluar días', type: 'n8n-nodes-base.code', typeVersion: 2, position: [1000, 600] },
+    { parameters: { jsCode: codigo.evaluar() }, name: 'Evaluar días', type: 'n8n-nodes-base.code', typeVersion: 2, position: [1000, 600] },
     conCred({
       parameters: {
         operation: 'sendPhoto', chatId, file: '={{ $json.chart_url }}',

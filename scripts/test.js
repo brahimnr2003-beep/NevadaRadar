@@ -1,10 +1,13 @@
 // Prueba la lógica del bot en local, sin n8n: node scripts/test.js
-// Simula una conversación (cerebro.js) y la evaluación con datos simulados (evaluar-dias.js).
+// Simula conversaciones (core/cerebro.js) y la evaluación con datos simulados (core/evaluar.js).
+// Ejecuta el MISMO código que se incrusta en los nodos Code de n8n (scripts/codigo-n8n.js)
+// y, al final, comprueba los módulos de core/ directamente, que es lo que usará el Worker.
 const fs = require('fs');
 const assert = require('assert');
 const leer = (f) => fs.readFileSync(__dirname + '/../' + f, 'utf8');
-const cerebroCode = leer('src/cerebro.js');
-const evaluarCode = leer('src/evaluar-dias.js');
+const codigo = require('./codigo-n8n');
+const cerebroCode = codigo.cerebro();
+const evaluarCode = codigo.evaluar();
 const mock = JSON.parse(leer('data/mock-open-meteo.json'));
 
 // --- Simulación del entorno de n8n para el nodo Cerebro ---
@@ -61,5 +64,25 @@ r = cerebro(mensaje(1, '/requisitos'));         assert.equal(r.accion, 'bienveni
 r = cerebro(mensaje(9, 'hola', 'group'));       assert.equal(r.accion, 'ignorar');
 r = cerebro(mensaje(1, '/borrar'));             assert.equal(memoria.users[1], undefined);
 r = cerebro(mensaje(1, '/prevision'));          assert.match(r.texto, /\/start/);
+
+// 5) Los módulos de core/ directamente (lo que usa el Worker): mismo resultado que en n8n y teclados desde código
+const core = require('../core/cerebro');
+const { evaluar: evaluarCore } = require('../core/evaluar');
+const estado = {};
+const dir = (update) => core.procesar(update, estado);
+let c = dir(mensaje(5, '/start'));
+assert.equal(c.accion, 'bienvenida'); assert.equal(c.teclado[0][0].callback_data, 'start:defaults'); assert.equal(c.callback_id, null);
+c = dir(boton(5, 'start:custom'));
+assert.equal(c.accion, 'pregunta'); assert.equal(c.callback_id, 'cb1');
+assert.deepEqual(c.teclado.map(f => f.length), [1, 3, 1]);               // predeterminado / 3 alternativas / escribir
+assert.equal(c.teclado[0][0].callback_data, c.b_def_data);                // coincide con los campos b_* que usa n8n
+assert.equal(dir(boton(5, 'start:defaults')).teclado[0][0].callback_data, 'prev'); // el resumen ofrece "Ver previsión"
+assert.equal(dir(boton(5, 'prev')).accion, 'prevision');
+const e1 = evaluarCore(mock.daily, estado.users[5].req, 5);
+const e2 = evaluarCore(mock.daily, estado.users[5].req, 5);
+assert.deepEqual(e1, e2);
+assert.equal(e1.caption, pB.caption);                                      // mismos requisitos predeterminados que el usuario B
+assert.equal(e1.calendar_url, pB.calendar_url);
+assert.equal(dir(mensaje(5, 'hola')).accion, 'texto');
 
 console.log('\n✅ Todas las pruebas pasan');

@@ -4,3 +4,5 @@ tokebot.txt
 *.token
 CLAUDE.md
 .claude/
+.wrangler/
+.dev.vars

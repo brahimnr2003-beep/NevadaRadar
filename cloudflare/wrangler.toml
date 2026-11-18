@@ -1,0 +1,9 @@
+name = "nevadaradar"
+main = "src/worker.js"
+compatibility_date = "2026-11-01"
+
+# Almacén de usuarios (Workers KV). Si wrangler no lo crea solo al desplegar, créalo con
+#   npx wrangler kv namespace create USERS
+# y añade aquí la línea  id = "<el id que te muestre>"
+[[kv_namespaces]]
+binding = "USERS"
