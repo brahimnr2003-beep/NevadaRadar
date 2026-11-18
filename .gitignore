@@ -1,0 +1,6 @@
+.env
+node_modules/
+tokebot.txt
+*.token
+CLAUDE.md
+.claude/

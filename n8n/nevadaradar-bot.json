@@ -1,0 +1,553 @@
+{
+  "name": "NevadaRadar · bot de Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "name": "Mensaje o botón",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "b7d1c6a0-5a0e-4e0a-9d33-2f6a1c0e7a11",
+      "credentials": {
+        "telegramApi": {
+          "id": "aJjDo1uVh5hJxw5Y",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ====== CEREBRO DEL BOT (cuerpo del nodo Code \"Cerebro\") ======\n// Recibe una actualización de Telegram (mensaje o botón), actualiza el estado del usuario\n// y devuelve UNA acción que el nodo Switch enruta al mensaje correcto.\n// Estado por usuario en la memoria del flujo: $getWorkflowStaticData('global').users[chat_id]\n\n// ---- Requisitos: valor predeterminado, límites válidos y alternativas de los botones ----\nconst CAMPOS = {\n  nieve:  { clave: 'minNieveNueva', def: 5,   min: 0,   max: 100, unidad: 'cm',   alt: [2, 10, 20],\n            titulo: 'Nieve nueva mínima',\n            pregunta: '¿Cuántos cm de nieve nueva necesitas como mínimo para que merezca la pena subir?' },\n  viento: { clave: 'maxViento',     def: 40,  min: 5,   max: 150, unidad: 'km/h', alt: [25, 55, 70],\n            titulo: 'Viento máximo',\n            pregunta: '¿A partir de qué viento sostenido (km/h) prefieres no subir?' },\n  rachas: { clave: 'maxRachas',     def: 60,  min: 10,  max: 200, unidad: 'km/h', alt: [40, 80, 100],\n            titulo: 'Rachas máximas',\n            pregunta: '¿Qué rachas máximas de viento (km/h) aceptas?' },\n  tmin:   { clave: 'tempMin',       def: -12, min: -40, max: 10,  unidad: '°C',   alt: [-8, -15, -20],\n            titulo: 'Temperatura mínima',\n            pregunta: '¿Qué temperatura mínima aguantas? Si la mínima del día es más fría, no cumple.' },\n  tmax:   { clave: 'tempMax',       def: 3,   min: -20, max: 25,  unidad: '°C',   alt: [0, 5, 8],\n            titulo: 'Temperatura máxima',\n            pregunta: '¿Qué temperatura máxima aceptas? Si hace más calor, la nieve se vuelve húmeda y pesada.' },\n};\nconst ORDEN = ['nieve', 'viento', 'rachas', 'tmin', 'tmax'];\n\nconst defaults = () => Object.fromEntries(ORDEN.map(c => [CAMPOS[c].clave, CAMPOS[c].def]));\nconst fmtResumen = (r) =>\n  `• Nieve nueva mínima: ${r.minNieveNueva} cm\\n• Viento máximo: ${r.maxViento} km/h\\n` +\n  `• Rachas máximas: ${r.maxRachas} km/h\\n• Temperatura mínima: ${r.tempMin} °C\\n• Temperatura máxima: ${r.tempMax} °C`;\n\nconst TEXTO_AYUDA =\n  '❄️ NevadaRadar te dice qué días de los próximos 16 merecen la pena en Sierra Nevada, según TUS requisitos.\\n\\n' +\n  'Comandos:\\n/prevision – previsión con tu gráfico\\n/requisitos – cambiar tus requisitos\\n' +\n  '/borrar – eliminar tus datos\\n/ayuda – este mensaje\\n\\n' +\n  'Colores del gráfico:\\n🟢 cumple todo · 🟡 falla 1 requisito · 🔴 falla 2 o más\\n' +\n  'Los colores claros son días más allá del 7º: previsión orientativa.';\n\n// ---- Entrada: normaliza el mensaje o el botón ----\nconst item = $input.first().json;\nconst cb = item.callback_query;\nconst msg = item.message || (cb && cb.message);\nconst chat = msg && msg.chat;\nif (!chat || chat.type !== 'private') return [{ json: { accion: 'ignorar' } }]; // solo chats privados\n\nconst chat_id = chat.id;\nconst texto = ((item.message && item.message.text) || '').trim();\nconst data = (cb && cb.data) || '';\n\nconst estado = $getWorkflowStaticData('global');\nestado.users = estado.users || {};\nconst u = estado.users[chat_id] = estado.users[chat_id] || { paso: 'nuevo', req: null };\n\n// ---- Salidas ----\nconst salir = (accion, extra = {}) =>\n  [{ json: { accion, chat_id, texto: '', req: u.req, ...extra } }];\n\nconst preguntar = (campo) => {\n  u.paso = campo;\n  const c = CAMPOS[campo];\n  const n = ORDEN.indexOf(campo) + 1;\n  const cdata = (v) => `v:${campo}:${v}`;\n  return salir('pregunta', {\n    texto: `${n}/5 · ${c.titulo}\\n${c.pregunta}\\n\\nElige una opción o escribe tu valor (en ${c.unidad}).`,\n    b_def_text: `Predeterminado: ${c.def} ${c.unidad}`, b_def_data: cdata(c.def),\n    b1_text: `${c.alt[0]} ${c.unidad}`, b1_data: cdata(c.alt[0]),\n    b2_text: `${c.alt[1]} ${c.unidad}`, b2_data: cdata(c.alt[1]),\n    b3_text: `${c.alt[2]} ${c.unidad}`, b3_data: cdata(c.alt[2]),\n    b_custom_data: cdata('custom'),\n  });\n};\n\nconst resumen = () => {\n  u.paso = 'listo';\n  return salir('resumen', { texto: `✅ Listo. Estos son tus requisitos:\\n\\n${fmtResumen(u.req)}\\n\\nPuedes cambiarlos cuando quieras con /requisitos.` });\n};\n\nconst guardarYSeguir = (campo, valor) => {\n  u.req = u.req || defaults();\n  u.req[CAMPOS[campo].clave] = valor;\n  const sig = ORDEN[ORDEN.indexOf(campo) + 1];\n  return sig ? preguntar(sig) : resumen();\n};\n\nconst intentarValor = (campo, bruto) => {\n  const c = CAMPOS[campo];\n  const v = Number(String(bruto).replace(',', '.'));\n  if (!isFinite(v) || String(bruto).trim() === '' || v < c.min || v > c.max) {\n    return salir('texto', { texto: `⚠️ \"${bruto}\" no es válido para ${c.titulo.toLowerCase()}. Escribe un número entre ${c.min} y ${c.max} ${c.unidad}.` });\n  }\n  return guardarYSeguir(campo, v);\n};\n\nconst iniciarConfig = (texto) => { u.paso = 'nuevo'; return salir('bienvenida', { texto }); };\nconst pedirPrevision = () => u.req ? salir('prevision') : salir('texto', { texto: 'Aún no has configurado tus requisitos. Escribe /start para empezar.' });\n\n// ---- Botones ----\nif (data) {\n  if (data === 'start:defaults') { u.req = defaults(); return resumen(); }\n  if (data === 'start:custom') { u.req = u.req || defaults(); return preguntar('nieve'); }\n  if (data === 'prev') return pedirPrevision();\n  const m = data.match(/^v:(\\w+):(.+)$/);\n  if (m && CAMPOS[m[1]]) {\n    const [, campo, val] = m;\n    if (val === 'custom') {\n      u.paso = campo;\n      return salir('texto', { texto: `✏️ Escríbeme el valor de ${CAMPOS[campo].titulo.toLowerCase()} (en ${CAMPOS[campo].unidad}).` });\n    }\n    return intentarValor(campo, val);\n  }\n  return salir('texto', { texto: 'Ese botón ya no está activo. Escribe /ayuda.' });\n}\n\n// ---- Comandos ----\nif (texto.startsWith('/')) {\n  const cmd = texto.split(/\\s|@/)[0].toLowerCase();\n  if (cmd === '/start') return iniciarConfig('👋 ¡Hola! Soy NevadaRadar ❄️\\nTe aviso de los días buenos para esquiar en Sierra Nevada según TUS requisitos (nieve, viento y temperatura).\\n\\n¿Cómo quieres configurarlos?');\n  if (cmd === '/requisitos') return iniciarConfig('⚙️ Vamos a cambiar tus requisitos. ¿Cómo quieres hacerlo?');\n  if (cmd === '/prevision') return pedirPrevision();\n  if (cmd === '/borrar') { delete estado.users[chat_id]; return salir('texto', { texto: '🗑️ He borrado tus datos. Escribe /start si quieres volver a empezar.', req: null }); }\n  if (cmd === '/ayuda') return salir('texto', { texto: TEXTO_AYUDA });\n  return salir('texto', { texto: 'No conozco ese comando.\\n\\n' + TEXTO_AYUDA });\n}\n\n// ---- Texto libre: un valor escrito mientras se configura ----\nif (CAMPOS[u.paso]) return intentarValor(u.paso, texto);\nreturn salir('texto', { texto: TEXTO_AYUDA });\n"
+      },
+      "name": "Cerebro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "bienvenida",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "bienvenida",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "pregunta",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "pregunta",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "texto",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "texto",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "resumen",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "resumen",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "prevision",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.accion }}",
+                    "rightValue": "prevision",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "¿Qué responder?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        480,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "⚡ Usar predeterminados",
+                    "additionalFields": {
+                      "callback_data": "start:defaults"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "⚙️ Personalizar",
+                    "additionalFields": {
+                      "callback_data": "start:custom"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Enviar bienvenida",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        -120
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "aJjDo1uVh5hJxw5Y",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $json.b_def_text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b_def_data }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $json.b1_text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b1_data }}"
+                    }
+                  },
+                  {
+                    "text": "={{ $json.b2_text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b2_data }}"
+                    }
+                  },
+                  {
+                    "text": "={{ $json.b3_text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b3_data }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✏️ Escribir otro valor",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b_custom_data }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Enviar pregunta",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        60
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "aJjDo1uVh5hJxw5Y",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Enviar texto",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        240
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "aJjDo1uVh5hJxw5Y",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📊 Ver previsión ahora",
+                    "additionalFields": {
+                      "callback_data": "prev"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Enviar resumen",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        420
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "aJjDo1uVh5hJxw5Y",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.open-meteo.com/v1/forecast",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "latitude",
+              "value": "37.0955"
+            },
+            {
+              "name": "longitude",
+              "value": "-3.3966"
+            },
+            {
+              "name": "elevation",
+              "value": "2500"
+            },
+            {
+              "name": "daily",
+              "value": "snowfall_sum,temperature_2m_max,temperature_2m_min,wind_speed_10m_max,wind_gusts_10m_max"
+            },
+            {
+              "name": "forecast_days",
+              "value": "16"
+            },
+            {
+              "name": "timezone",
+              "value": "Europe/Madrid"
+            },
+            {
+              "name": "wind_speed_unit",
+              "value": "kmh"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Open-Meteo 16 días",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ====== EVALUAR DÍAS (cuerpo del nodo Code \"Evaluar días\") ======\n// Entrada: previsión de Open-Meteo ($input). Los requisitos y el chat_id vienen del nodo \"Cerebro\".\n// Salida: { chat_id, chart_url, caption } -> nodo Telegram sendPhoto.\n\nconst DIAS_FIABLES = 7; // pasado este día, la previsión es orientativa\n\nconst cerebro = $('Cerebro').first().json;\nconst REQ = cerebro.req;\nconst d = $input.first().json.daily;\n\nconst DIA_CORTO = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];\nconst DIA_LARGO = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];\n\nconst dias = d.time.map((fecha, i) => {\n  const fallos = [];\n  if (d.snowfall_sum[i] < REQ.minNieveNueva) fallos.push(`nieve ${d.snowfall_sum[i]} cm`);\n  if (d.wind_speed_10m_max[i] > REQ.maxViento) fallos.push(`viento ${Math.round(d.wind_speed_10m_max[i])} km/h`);\n  if (d.wind_gusts_10m_max[i] > REQ.maxRachas) fallos.push(`rachas ${Math.round(d.wind_gusts_10m_max[i])} km/h`);\n  if (d.temperature_2m_min[i] < REQ.tempMin) fallos.push(`mín ${Math.round(d.temperature_2m_min[i])}°C`);\n  if (d.temperature_2m_max[i] > REQ.tempMax) fallos.push(`máx ${Math.round(d.temperature_2m_max[i])}°C`);\n  const color = fallos.length === 0 ? 'verde' : fallos.length === 1 ? 'amarillo' : 'rojo';\n  const dt = new Date(fecha + 'T12:00:00');\n  return {\n    i, fallos, color, orientativo: i >= DIAS_FIABLES,\n    etiqueta: `${DIA_CORTO[dt.getDay()]} ${dt.getDate()}`,\n    nombre: `${DIA_LARGO[dt.getDay()]} ${dt.getDate()}/${dt.getMonth() + 1}`,\n    nieve: d.snowfall_sum[i], viento: Math.round(d.wind_speed_10m_max[i]),\n    tmin: Math.round(d.temperature_2m_min[i]), tmax: Math.round(d.temperature_2m_max[i]),\n  };\n});\n\n// ---- Gráfico (QuickChart): barras de nieve por día, coloreadas según los requisitos ----\nconst RGB = { verde: '46,204,113', amarillo: '241,196,15', rojo: '231,76,60' };\nconst colores = dias.map(x => `rgba(${RGB[x.color]},${x.orientativo ? 0.4 : 1})`);\nconst config = {\n  type: 'bar',\n  data: {\n    labels: dias.map(x => x.etiqueta),\n    datasets: [\n      { label: 'Nieve nueva (cm)', data: dias.map(x => x.nieve), backgroundColor: colores },\n      { type: 'line', label: `Tu mínimo (${REQ.minNieveNueva} cm)`, data: dias.map(() => REQ.minNieveNueva),\n        borderColor: '#34495e', borderWidth: 2, borderDash: [6, 4], fill: false, pointRadius: 0 },\n    ],\n  },\n  options: {\n    title: { display: true, text: `Nieve nueva por día (cm) · línea discontinua: tu mínimo, ${REQ.minNieveNueva} cm` },\n    legend: { display: false },\n    scales: { yAxes: [{ ticks: { beginAtZero: true } }] },\n  },\n};\nconst chart_url = 'https://quickchart.io/chart?v=2&w=800&h=450&backgroundColor=white&c=' +\n  encodeURIComponent(JSON.stringify(config));\n\n// ---- Calendario (QuickChart): cuadrícula L-D con los días aptos y no aptos ----\nconst MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];\nconst primero = new Date(d.time[0] + 'T12:00:00');\nconst ultimo = new Date(d.time[d.time.length - 1] + 'T12:00:00');\nconst mesTitulo = primero.getMonth() === ultimo.getMonth()\n  ? `${MESES[primero.getMonth()]} ${primero.getFullYear()}`\n  : `${MESES[primero.getMonth()]}–${MESES[ultimo.getMonth()]} ${ultimo.getFullYear()}`;\nconst offset = (primero.getDay() + 6) % 7; // lunes = 0\nconst celdas = dias.map(x => {\n  const pos = offset + x.i;\n  return { x: pos % 7, y: Math.floor(pos / 7), d: Number(d.time[x.i].slice(8)),\n           t: x.color === 'amarillo' || x.orientativo ? '#2c3e50' : '#ffffff' };\n});\nconst filas = Math.floor((offset + dias.length - 1) / 7) + 1;\nconst calConfig = {\n  type: 'scatter',\n  data: { datasets: [{\n    data: celdas, pointStyle: 'rectRounded', pointRadius: 34, pointHoverRadius: 34,\n    backgroundColor: colores,\n    borderColor: dias.map(x => (x.i === 0 ? '#2c3e50' : 'rgba(0,0,0,0)')), borderWidth: 3, // hoy: borde oscuro\n  }] },\n  options: {\n    legend: { display: false },\n    title: { display: true, text: `Calendario · ${mesTitulo}`, fontSize: 18 },\n    layout: { padding: 10 },\n    scales: {\n      xAxes: [{ position: 'top', gridLines: { display: false, drawBorder: false },\n                ticks: { min: -0.6, max: 6.6, stepSize: 1, fontSize: 15, fontStyle: 'bold', callback: '__F_DIAS__' } }],\n      yAxes: [{ gridLines: { display: false, drawBorder: false },\n                ticks: { reverse: true, min: -0.6, max: filas - 0.4, display: false } }],\n    },\n    plugins: { datalabels: { color: '__F_COLOR__', font: { size: 17, weight: 'bold' }, formatter: '__F_NUM__' } },\n  },\n};\nconst calendar_url = `https://quickchart.io/chart?v=2&w=720&h=${filas * 88 + 110}&backgroundColor=white&c=` +\n  encodeURIComponent(JSON.stringify(calConfig)\n    .replace('\"__F_DIAS__\"', \"function(v){return ['L','M','X','J','V','S','D'][v]||''}\")\n    .replace('\"__F_COLOR__\"', 'function(c){return c.dataset.data[c.dataIndex].t}')\n    .replace('\"__F_NUM__\"', 'function(v){return v.d}'));\n\n// ---- Texto bajo la imagen ----\nconst aptos = dias.filter(x => x.color === 'verde');\nconst mejor = [...dias].sort((a, b) => a.fallos.length - b.fallos.length || b.nieve - a.nieve || a.i - b.i)[0];\nconst orient = (x) => (x.orientativo ? ' (orientativo)' : '');\n\nlet caption = '❄️ Sierra Nevada · próximos 16 días\\n\\n';\nif (aptos.length) {\n  caption += `🏆 Tu mejor día: ${mejor.nombre}${orient(mejor)}\\n   ${mejor.nieve} cm de nieve · viento ${mejor.viento} km/h · ${mejor.tmin}/${mejor.tmax}°C\\n\\n`;\n  caption += `✅ Días aptos (${aptos.length}): ${aptos.map(x => x.etiqueta + (x.orientativo ? '*' : '')).join(', ')}\\n`;\n} else {\n  caption += `Ningún día cumple todos tus requisitos.\\nLo más cerca: ${mejor.nombre}${orient(mejor)} — falla ${mejor.fallos.join(' y ')}.\\n`;\n}\ncaption += '\\n🟢 cumple todo · 🟡 falla 1 · 🔴 falla 2 o más\\n';\ncaption += 'Colores claros / *: más allá del día 7, previsión orientativa.\\n';\ncaption += `\\nTus requisitos: ≥${REQ.minNieveNueva} cm · viento ≤${REQ.maxViento} · rachas ≤${REQ.maxRachas} · ${REQ.tempMin}/${REQ.tempMax}°C\\nCámbialos con /requisitos`;\n\nconst calendar_caption = '📅 Días aptos y no aptos\\n🟢 apto · 🟡 falla 1 requisito · 🔴 no apto (falla 2 o más)\\nColores claros: previsión orientativa. Borde oscuro: hoy.';\n\nreturn [{ json: { chat_id: cerebro.chat_id, chart_url, calendar_url, caption, calendar_caption } }];\n"
+      },
+      "name": "Evaluar días",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendPhoto",
+        "chatId": "={{ $json.chat_id }}",
+        "file": "={{ $json.chart_url }}",
+        "additionalFields": {
+          "caption": "={{ $json.caption }}",
+          "appendAttribution": false
+        }
+      },
+      "name": "Enviar gráfico",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1240,
+        600
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "aJjDo1uVh5hJxw5Y",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendPhoto",
+        "chatId": "={{ $('Evaluar días').item.json.chat_id }}",
+        "file": "={{ $('Evaluar días').item.json.calendar_url }}",
+        "additionalFields": {
+          "caption": "={{ $('Evaluar días').item.json.calendar_caption }}",
+          "appendAttribution": false
+        }
+      },
+      "name": "Enviar calendario",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1480,
+        600
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "aJjDo1uVh5hJxw5Y",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Mensaje o botón": {
+      "main": [
+        [
+          {
+            "node": "Cerebro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cerebro": {
+      "main": [
+        [
+          {
+            "node": "¿Qué responder?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Qué responder?": {
+      "main": [
+        [
+          {
+            "node": "Enviar bienvenida",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar pregunta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar texto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar resumen",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Open-Meteo 16 días",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open-Meteo 16 días": {
+      "main": [
+        [
+          {
+            "node": "Evaluar días",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluar días": {
+      "main": [
+        [
+          {
+            "node": "Enviar gráfico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar gráfico": {
+      "main": [
+        [
+          {
+            "node": "Enviar calendario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
