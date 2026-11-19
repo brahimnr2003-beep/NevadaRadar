@@ -1,5 +1,8 @@
 # NevadaRadar ❄️
 
+[![Tests](https://github.com/brahimnr2003-beep/NevadaRadar/actions/workflows/test.yml/badge.svg)](https://github.com/brahimnr2003-beep/NevadaRadar/actions/workflows/test.yml)
+[![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-green.svg)](LICENSE)
+
 **Un bot de Telegram que te dice qué días de los próximos 16 merecen la pena para esquiar en Sierra Nevada, según _tus_ requisitos de nieve, viento y temperatura.**
 
 Cada esquiador tiene sus propios límites: unos suben con 5 cm de nieve nueva y otros con 20, unos aguantan rachas de 60 km/h y otros no. NevadaRadar le pregunta a cada usuario los suyos (con botones o escribiendo el valor) y, cuando lo pide con `/prevision`, le contesta con un gráfico de nieve y un calendario de días aptos y no aptos.
@@ -129,3 +132,7 @@ En Windows PowerShell, si `npx` da un error de "running scripts is disabled", us
 | `/requisitos` | Cambia tus requisitos |
 | `/borrar` | Elimina tus datos |
 | `/ayuda` | Explica el bot y los colores |
+
+## Licencia
+
+Código bajo licencia [MIT](LICENSE). Los datos de previsión son de [Open-Meteo.com](https://open-meteo.com) (CC BY 4.0).

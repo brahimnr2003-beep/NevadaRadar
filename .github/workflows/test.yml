@@ -1,0 +1,24 @@
+name: Tests
+
+# Cada vez que se sube código a main (o se abre una pull request), GitHub prepara un
+# ordenador limpio y ejecuta las pruebas. No necesita secretos ni acceso a Telegram.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Lógica de n8n, módulos de core/ y Worker (con KV y red simulados)
+      - run: npm test
+      # El flujo de n8n debe poder generarse a partir de core/
+      - run: npm run build
